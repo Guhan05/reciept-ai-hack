@@ -1,0 +1,13 @@
+fastapi
+uvicorn[standard]
+python-dotenv
+requests
+pillow
+pytesseract
+google-cloud-vision==3.4.0
+openai
+python-multipart
+cryptography
+pyjwt
+fuzzywuzzy
+python-Levenshtein

@@ -1,0 +1,5 @@
+body { font-family: Arial, sans-serif; padding: 20px; background:#f7f8fb; }
+.container { max-width:800px; margin:0 auto; background:#fff; padding:20px; border-radius:8px;}
+button { padding:8px 12px; border:none; background:#2563eb; color:#fff; border-radius:6px; cursor:pointer;}
+input[type=file] { display:block; margin-bottom:10px; }
+.chat { border-top:1px solid #eee; margin-top:20px; padding-top:12px; }
