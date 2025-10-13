@@ -11,11 +11,15 @@ def normalize_merchant(name: str) -> str:
     return name.strip()
 
 def match_receipt_to_transactions(receipt_fields: dict, transactions: list):
+    """
+    Returns best match dict or None:
+    { txn: {...}, confidence: 0.92, merchant_score: 88, amount_diff: 0.0, date_diff_days: 0 }
+    """
     if not receipt_fields:
         return None
 
     r_merchant = normalize_merchant(receipt_fields.get("merchant", ""))
-    r_date = receipt_fields.get("date") or None
+    r_date = receipt_fields.get("date")
     r_amount_raw = receipt_fields.get("total") or receipt_fields.get("amount")
 
     try:
@@ -35,10 +39,7 @@ def match_receipt_to_transactions(receipt_fields: dict, transactions: list):
             continue
 
         amount_diff = abs(t_amount - r_amount)
-        if r_amount:
-            amount_ok = amount_diff <= max(1.0, 0.02 * r_amount)
-        else:
-            amount_ok = False
+        amount_ok = amount_diff <= max(1.0, 0.02 * r_amount)
 
         if not amount_ok:
             continue
@@ -57,6 +58,7 @@ def match_receipt_to_transactions(receipt_fields: dict, transactions: list):
         score = fuzz.token_set_ratio(r_merchant, normalize_merchant(txn.get("merchant", "")))
 
         if amount_ok and date_ok:
+            # combine heuristics
             confidence = (score / 100) * 0.7 + (1 - (amount_diff / (r_amount + 1))) * 0.3
             confidence = round(confidence, 2)
             if not best or confidence > best["confidence"]:

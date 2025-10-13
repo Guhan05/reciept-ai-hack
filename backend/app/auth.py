@@ -2,12 +2,12 @@
 import os
 import jwt
 from datetime import datetime, timedelta
-from fastapi import HTTPException, Header
+from fastapi import HTTPException, Header, Depends
 
-JWT_SECRET = os.getenv("JWT_SECRET", "devsecret")
+JWT_SECRET = os.getenv("JWT_SECRET", "devsecret123")
 JWT_ALG = "HS256"
 
-def create_token(user_id="demo", scopes=None, expires_minutes=60*24):
+def create_token(user_id="demo_user", scopes=None, expires_minutes=60*24):
     payload = {
         "sub": user_id,
         "scopes": scopes or ["read:transactions","write:receipts","chat:insights"],
@@ -20,7 +20,7 @@ def verify_token(authorization: str = Header(None)):
         raise HTTPException(status_code=401, detail="Missing Authorization header")
     parts = authorization.split()
     if parts[0].lower() != "bearer" or len(parts) != 2:
-        raise HTTPException(status_code=401, detail="Invalid auth header")
+        raise HTTPException(status_code=401, detail="Invalid Authorization header")
     token = parts[1]
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG])
