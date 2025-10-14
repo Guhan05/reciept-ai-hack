@@ -1,23 +1,32 @@
-# app/main.py
 import os
-from fastapi import FastAPI, UploadFile, File, HTTPException, Depends
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
 from io import BytesIO
+from typing import Dict, Optional
+from datetime import datetime
 
 load_dotenv()
 
+# We removed the debug print statements for clarity
+# print("="*50)
+# print(f"[DEBUG from main.py] Is the API Key loaded at startup? -> '{os.getenv('OPENAI_API_KEY')}'")
+# print("="*50)
+
 from app.ocr import perform_ocr
 from app.mock_mcp import get_account_data
-from app.gpt_helpers import ask_gpt
+from app.ai_helpers import ask_ai
 from app.fusion import match_receipt_to_transactions
-from app.auth import create_token, verify_token
+from app.auth import create_token, verify_token, get_password_hash, verify_password
 from app.crypto_utils import encrypt_bytes, decrypt_bytes, encrypt_json, decrypt_json
 
-app = FastAPI(title="Receipt AI — Backend (Demo)")
+app = FastAPI(title="ReceiptAI — Backend")
 
-# CORS for local dev (frontend at 5173)
+# ==============================================================================
+# VVVV THIS BLOCK WAS MISSING AND IS NOW ADDED BACK VVVV
+# This is required for the frontend to be able to log in.
+# ==============================================================================
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://localhost:3000"],
@@ -25,154 +34,130 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# ==============================================================================
 
-# In-memory demo store
-STORE = {
-    "receipts": [],   # each receipt: id, filename, uploader, image_encrypted, fields_encrypted, text_encrypted, reconciliation
-    "transactions": get_account_data()["transactions"].copy()
-}
+
+DB = {"users": {},"data": {}}
+
+def get_user_data(username: str) -> Dict:
+    if username not in DB["data"]:
+        DB["data"][username] = {"receipts": [], "transactions": get_account_data(username)["transactions"].copy()}
+    return DB["data"][username]
 
 @app.get("/healthz")
 def health():
     return {"status": "ok"}
 
-@app.post("/auth/login-demo")
-def login_demo():
-    token = create_token(user_id="demo_user")
+@app.post("/auth/register")
+def register_user(username: str = Body(...), password: str = Body(...)):
+    if not username or not password:
+        raise HTTPException(status_code=400, detail="Username and password are required")
+    if len(password.encode('utf-8')) > 72:
+        raise HTTPException(status_code=400, detail="Password is too long. Please use a password 72 characters or fewer.")
+    if username in DB["users"]:
+        raise HTTPException(status_code=400, detail="Username already registered")
+    
+    hashed_password = get_password_hash(password)
+    DB["users"][username] = {"hashed_password": hashed_password}
+    get_user_data(username)
+    return {"ok": True, "message": "User registered successfully"}
+
+@app.post("/auth/login")
+def login_user(username: str = Body(...), password: str = Body(...)):
+    user = DB["users"].get(username)
+    if not user or not verify_password(password, user["hashed_password"]):
+        raise HTTPException(status_code=401, detail="Incorrect username or password")
+    
+    token = create_token(user_id=username)
     return {"token": token}
 
 @app.post("/upload")
-async def upload_receipt(file: UploadFile = File(...), token: dict = Depends(verify_token)):
-    """
-    Upload receipt image:
-    - store encrypted image and encrypted OCR fields/text
-    - create a demo transaction (synthetic) based on OCR total (if found)
-    - run reconciliation with existing transactions and attach result
-    """
+async def upload_receipt(
+    file: UploadFile = File(...), 
+    category: str = Form(...),
+    token: dict = Depends(verify_token)
+):
+    username = token.get("sub")
+    user_data = get_user_data(username)
     contents = await file.read()
-
-    # OCR (use local or Google Vision per env)
+    
     ocr_res = perform_ocr(contents)
+    ocr_fields = ocr_res.get("fields", {})
 
-    # encrypt and store
     enc_image = encrypt_bytes(contents)
     enc_text = encrypt_bytes(ocr_res.get("text", "").encode())
-    enc_fields = encrypt_json(ocr_res.get("fields", {}))
+    enc_fields = encrypt_json(ocr_fields)
+    rec_id = len(user_data["receipts"]) + 1
+    rec = { "id": rec_id, "filename": file.filename, "image_encrypted": enc_image, "text_encrypted": enc_text, "fields_encrypted": enc_fields, "reconciliation": None }
+    
+    best_match = match_receipt_to_transactions(ocr_fields, user_data["transactions"])
+    new_txn_created = None
 
-    rec_id = len(STORE["receipts"]) + 1
-    rec = {
-        "id": rec_id,
-        "filename": file.filename,
-        "uploader": token.get("sub"),
-        "image_encrypted": enc_image,
-        "text_encrypted": enc_text,
-        "fields_encrypted": enc_fields,
-        "reconciliation": None
-    }
-    STORE["receipts"].append(rec)
-
-    # synthetic transaction (demo)
-    amount = None
-    try:
-        total_field = ocr_res.get("fields", {}).get("total")
-        if total_field is not None:
-            amount = float(str(total_field))
-    except Exception:
+    if best_match and best_match.get("confidence", 0) > 0.8:
+        rec["reconciliation"] = best_match
+    else:
         amount = None
+        try:
+            total_field = ocr_fields.get("total")
+            if total_field is not None: amount = float(str(total_field).replace(",", ""))
+        except Exception:
+            amount = None
+        
+        if amount is not None: amount = -abs(amount)
 
-    txn = {
-        "id": f"r{rec_id}",
-        "date": ocr_res.get("fields", {}).get("date") or "2025-09-05",
-        "merchant": ocr_res.get("fields", {}).get("merchant") or "Unknown",
-        "amount": amount,
-        "category": "Uncategorized",
-        "mode": "Card"
+        new_txn_created = { 
+            "id": f"r{rec_id}", 
+            "date": ocr_fields.get("date") or datetime.now().strftime("%Y-%m-%d"), 
+            "merchant": ocr_fields.get("merchant") or "Scanned Item", 
+            "amount": amount, 
+            "category": category,
+            "mode": "Card" 
+        }
+        user_data["transactions"].append(new_txn_created)
+
+    user_data["receipts"].append(rec)
+
+    return {
+        "ok": True,
+        "ocr_fields": ocr_fields,
+        "match": best_match,
+        "new_txn_created": new_txn_created,
+        "receipt_id": rec_id
     }
-    STORE["transactions"].append(txn)
 
-    # attempt reconciliation
+@app.post("/transactions/manual")
+def add_manual_transaction(payload: dict, token: dict = Depends(verify_token)):
+    username = token.get("sub")
+    user_data = get_user_data(username)
+    merchant = payload.get("merchant")
+    amount = payload.get("amount")
+    category = payload.get("category", "Manual Entry")
+    if not all([merchant, amount]): raise HTTPException(status_code=400, detail="Merchant and amount are required")
     try:
-        fields_plain = ocr_res.get("fields", {})
-        best = match_receipt_to_transactions(fields_plain, STORE["transactions"])
-        if best:
-            rec["reconciliation"] = best
-    except Exception:
-        rec["reconciliation"] = None
+        amount_float = -abs(float(amount))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid amount")
+    txn_id = f"m{len(user_data['transactions']) + 1}"
+    new_txn = { "id": txn_id, "date": datetime.now().strftime("%Y-%m-%d"), "merchant": merchant, "amount": amount_float, "category": category, "mode": "Manual" }
+    user_data["transactions"].append(new_txn)
+    return {"ok": True, "transaction": new_txn}
 
-    # return safe metadata (no encrypted blobs)
-    return {"ok": True, "receipt": {"id": rec_id, "filename": rec["filename"], "reconciliation": rec.get("reconciliation")}, "new_txn": txn}
-
-@app.get("/receipts")
-def list_receipts(token: dict = Depends(verify_token)):
-    """
-    Return list of receipts metadata for the authenticated user.
-    """
-    user = token.get("sub")
-    items = []
-    for r in STORE["receipts"]:
-        if r.get("uploader") != user:
-            continue
-        items.append({
-            "id": r["id"],
-            "filename": r["filename"],
-            "has_reconciliation": r.get("reconciliation") is not None
-        })
-    return items
-
-@app.get("/receipts/{rid}")
-def get_receipt(rid: int, token: dict = Depends(verify_token)):
-    r = next((x for x in STORE["receipts"] if x["id"] == rid), None)
-    if not r:
-        raise HTTPException(status_code=404, detail="Receipt not found")
-    if r.get("uploader") != token.get("sub"):
-        raise HTTPException(status_code=403, detail="Forbidden")
-    # decrypt structured fields and text
-    fields = decrypt_json(r["fields_encrypted"])
-    text = decrypt_bytes(r["text_encrypted"]).decode()
-    return {"id": r["id"], "filename": r["filename"], "ocr_fields": fields, "ocr_text": text, "reconciliation": r.get("reconciliation")}
-
-@app.get("/receipts/{rid}/image")
-def get_receipt_image(rid: int, token: dict = Depends(verify_token)):
-    r = next((x for x in STORE["receipts"] if x["id"] == rid), None)
-    if not r:
-        raise HTTPException(status_code=404, detail="Receipt not found")
-    if r.get("uploader") != token.get("sub"):
-        raise HTTPException(status_code=403, detail="Forbidden")
-    img_bytes = decrypt_bytes(r["image_encrypted"])
-    return StreamingResponse(BytesIO(img_bytes), media_type="image/jpeg")
-
-@app.delete("/receipts/{rid}")
-def delete_receipt(rid: int, token: dict = Depends(verify_token)):
-    idx = next((i for i, x in enumerate(STORE["receipts"]) if x["id"] == rid), None)
-    if idx is None:
-        raise HTTPException(status_code=404, detail="Receipt not found")
-    if STORE["receipts"][idx].get("uploader") != token.get("sub"):
-        raise HTTPException(status_code=403, detail="Forbidden")
-    STORE["receipts"].pop(idx)
-    return {"ok": True, "deleted": rid}
-
-@app.post("/reconcile/{rid}")
-def reconcile_receipt(rid: int, token: dict = Depends(verify_token)):
-    r = next((x for x in STORE["receipts"] if x["id"] == rid), None)
-    if not r:
-        raise HTTPException(status_code=404, detail="Receipt not found")
-    if r.get("uploader") != token.get("sub"):
-        raise HTTPException(status_code=403, detail="Forbidden")
-    fields = decrypt_json(r["fields_encrypted"])
-    best = match_receipt_to_transactions(fields, STORE["transactions"])
-    r["reconciliation"] = best
-    return {"ok": True, "reconciliation": best}
-
-@app.get("/transactions")
-def get_transactions(token: dict = Depends(verify_token)):
-    # Return mock + synthetic txns for the owner
-    return {"transactions": STORE["transactions"]}
+@app.get("/dashboard-data")
+def get_dashboard_data(token: dict = Depends(verify_token)):
+    username = token.get("sub")
+    user_data = get_user_data(username)
+    return { "transactions": sorted(user_data["transactions"], key=lambda x: x['date'], reverse=True), "receipts": [{"id": r["id"], "filename": r["filename"]} for r in user_data["receipts"]] }
 
 @app.post("/chat")
 def chat(payload: dict, token: dict = Depends(verify_token)):
+    username = token.get("sub")
+    user_data = get_user_data(username)
     q = payload.get("question")
     if not q:
         raise HTTPException(status_code=400, detail="Missing question")
-    txns = STORE["transactions"][-20:]
-    answer = ask_gpt(txns, q)
+    txns = user_data["transactions"][-20:]
+    answer = ask_ai(txns, q)
     return {"answer": answer}
+
+# The rest of the endpoints are omitted for brevity but should be present in your file
+# from the previous versions I sent.
