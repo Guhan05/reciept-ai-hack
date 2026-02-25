@@ -1,3 +1,6 @@
+🏆 7th Place — CodeCraft’25 National Level Hackathon  
+🔐 Secure AI-Powered Financial Intelligence Platform
+
 # ReceiptAI — Secure AI-Powered Receipt Intelligence Platform
 
 ReceiptAI is a full-stack AI-powered financial receipt management system that allows users to securely upload receipts, automatically extract transaction data using OCR, reconcile receipts with bank transactions, encrypt sensitive information, and gain financial insights through an AI assistant.
@@ -347,3 +350,4 @@ AI Systems Developer | Cybersecurity | Financial AI
 # License
 
 This project is intended for educational, research, and portfolio use.
+
