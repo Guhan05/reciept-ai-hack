@@ -202,99 +202,160 @@ ReceiptAI/
 
 ---
 
-# Installation Guide
+# Step-by-Step Guide to Run the Application
 
-## Backend Setup
-
-### 1. Create virtual environment
-
-```
-python -m venv venv
-```
-
-Activate:
-
-Windows:
-
-```
-venv\Scripts\activate
-```
-
-Linux/Mac:
-
-```
-source venv/bin/activate
-```
+Follow these step-by-step instructions to set up and run both the FastAPI backend and the React frontend on your machine.
 
 ---
 
-### 2. Install dependencies
+## Prerequisites
 
-```
-pip install fastapi uvicorn python-dotenv pytesseract pillow cryptography passlib[bcrypt] fuzzywuzzy python-jose
-```
+Before starting, ensure you have the following installed on your system:
 
----
-
-### 3. Install Tesseract OCR
-
-Download and install:
-
-https://github.com/tesseract-ocr/tesseract
-
-Update path in:
-
-```
-app/ocr.py
-```
+1. **Python 3.10 or higher**
+   * Download: [python.org](https://www.python.org/downloads/)
+   * Verify in terminal: `python --version`
+2. **Node.js (v18 or higher) & npm**
+   * Download: [nodejs.org](https://nodejs.org/)
+   * Verify in terminal: `node -v` and `npm -v`
+3. **Tesseract OCR (for Local Receipt OCR)**
+   * **Windows:** Download and run the installer from [UB-Mannheim Tesseract OCR](https://github.com/UB-Mannheim/tesseract/wiki).
+     * Default install path: `C:\Program Files\Tesseract-OCR\tesseract.exe`
+     * (Ensure this path matches `app/ocr.py` or add Tesseract to your System `PATH`).
+   * **Linux:** `sudo apt install tesseract-ocr`
+   * **macOS:** `brew install tesseract`
 
 ---
 
-### 4. Configure environment variables
+## Step 1: Start the Backend Server (Terminal 1)
 
-Create `.env`
+Open a terminal window and navigate to the `backend` folder:
 
+### 1.1 Navigate to backend directory
+```bash
+cd backend
 ```
-JWT_SECRET=your_secret_key
-ENCRYPTION_KEY=your_encryption_key
+
+### 1.2 Create and activate a Python virtual environment
+
+* **Windows (PowerShell):**
+  ```powershell
+  python -m venv venv
+  .\venv\Scripts\Activate.ps1
+  ```
+  *(Note: If PowerShell throws a script execution policy error, run `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` and try activating again).*
+
+* **Windows (Command Prompt):**
+  ```cmd
+  python -m venv venv
+  venv\Scripts\activate.bat
+  ```
+
+* **Linux / macOS:**
+  ```bash
+  python3 -m venv venv
+  source venv/bin/activate
+  ```
+
+### 1.3 Install backend dependencies
+```bash
+pip install -r requirements.txt
+```
+
+### 1.4 Configure environment variables
+Create or verify your `.env` file inside the `backend` directory (copy from `.env.example` if it doesn't already exist):
+
+```powershell
+# On Windows PowerShell
+Copy-Item .env.example .env
+
+# On Linux / macOS
+cp .env.example .env
+```
+
+Open `backend/.env` and configure your keys:
+```env
+GEMINI_API_KEY=your_gemini_api_key_here
+JWT_SECRET=REDACTED_JWT_SECRET
 USE_GOOGLE_VISION=false
+GOOGLE_APPLICATION_CREDENTIALS=
 ```
+> [!NOTE]
+> `backend/.env` is included in `.gitignore` and `.ignore` so your actual API keys and secrets will never be committed to GitHub.
+
+### 1.5 Launch the FastAPI server
+```bash
+uvicorn app.main:app --reload --port 8000
+```
+
+* **Backend API:** `http://localhost:8000`
+* **Interactive API Documentation (Swagger):** `http://localhost:8000/docs`
+
+Keep this terminal running.
 
 ---
 
-### 5. Run backend
+## Step 2: Start the Frontend Application (Terminal 2)
 
-```
-uvicorn app.main:app --reload
-```
+Open a **new, separate terminal window** and navigate to the `frontend` folder:
 
-Backend runs at:
-
-```
-http://localhost:8000
-```
-
-Docs available at:
-
-```
-http://localhost:8000/docs
-```
-
----
-
-# Frontend Setup
-
-```
+### 2.1 Navigate to frontend directory
+```bash
 cd frontend
+```
+
+### 2.2 Install npm dependencies
+```bash
 npm install
+```
+
+### 2.3 Start the Vite development server
+```bash
 npm run dev
 ```
 
-Frontend runs at:
-
-```
+The frontend development server will start, typically at:
+```text
 http://localhost:5173
 ```
+
+---
+
+## Step 3: Application Walkthrough
+
+1. Open your web browser and navigate to:
+   ```text
+   http://localhost:5173
+   ```
+2. **Register a User:**
+   * Click on the register option or go to the login screen.
+   * Enter a username and password to create an account.
+3. **Log In:**
+   * Enter your credentials to log in. The backend issues a secure JWT token.
+4. **Dashboard & Features:**
+   * **Receipt Upload:** Upload receipt images (`.png`, `.jpg`, `.jpeg`). Tesseract OCR extracts merchant name, date, and amount, encrypts the image via Fernet, and reconciles transactions.
+   * **Manual Transaction Entry:** Log offline or cash expenses with category and timestamp.
+   * **Financial Analytics:** View expense breakdown charts, spending categories, and timelines.
+   * **Encrypted Vault:** Inspect your securely encrypted receipt assets.
+   * **AI Assistant:** Ask questions about your spending (e.g., *"How much did I spend on food?"*, *"What was my biggest expense?"*, or *"Give me saving tips"*).
+
+---
+
+## Troubleshooting & FAQs
+
+* **PowerShell script execution error when activating `venv`:**
+  Run:
+  ```powershell
+  Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+  ```
+* **`pytesseract.TesseractNotFoundError`:**
+  Make sure Tesseract OCR is installed at `C:\Program Files\Tesseract-OCR\tesseract.exe` or update the path in `backend/app/ocr.py`.
+* **API calls fail from frontend (Network Error / CORS):**
+  Ensure the backend is running at `http://localhost:8000` before interacting with the frontend.
+* **Port 8000 or 5173 already in use:**
+  * For backend: `uvicorn app.main:app --reload --port 8001` (and set `VITE_API_URL=http://localhost:8001` in `frontend/.env`).
+  * For frontend: Vite will automatically suggest an alternate port (e.g. `5174`).
+
 
 ---
 
@@ -340,14 +401,16 @@ http://localhost:5173
 
 ---
 
-# Author
+# Author & Repository
 
-Guhan M
-AI Systems Developer | Cybersecurity | Financial AI
+* **Author:** Guhan M (AI Systems Developer | Cybersecurity | Financial AI)
+* **GitHub Profile:** [@Guhan05](https://github.com/Guhan05)
+* **GitHub Repository:** [https://github.com/Guhan05/reciept-ai-hack](https://github.com/Guhan05/reciept-ai-hack)
 
 ---
 
 # License
 
 This project is intended for educational, research, and portfolio use.
+
 
